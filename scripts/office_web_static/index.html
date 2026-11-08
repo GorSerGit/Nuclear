@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MTMC — обработка офиса</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/office.css?v=2">
+  <script src="/office.js?v=2" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <strong class="brand">MTMC</strong>
+    <nav id="tabs" aria-label="Разделы">
+      <button type="button" data-tab="results" aria-pressed="true">Результаты</button>
+      <button type="button" data-tab="process" aria-pressed="false">Обработка</button>
+      <button type="button" data-tab="videos" aria-pressed="false">Видео</button>
+      <button type="button" data-tab="plan" aria-pressed="false">Разметка</button>
+      <button type="button" data-tab="dependencies" aria-pressed="false">Зависимости</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="results" class="framed" aria-label="Результаты">
+      <div id="history-fallback" class="toolbar">
+        <div id="history-controls">
+          <select id="generation" aria-label="Результат" disabled><option>Загрузка…</option></select>
+          <button type="button" id="clear-history" class="danger" disabled>Удалить все результаты</button>
+          <span id="results-message" class="error" role="status"></span>
+        </div>
+      </div>
+      <iframe id="viewer" title="Просмотр треков и людей" hidden></iframe>
+      <div id="empty-results" class="empty">
+        <a href="#process">Перейти к обработке</a>
+      </div>
+    </section>
+
+    <section id="process" class="scroll" aria-labelledby="process-title" hidden>
+      <div class="workbench">
+        <form id="process-form" class="form-stack">
+          <h1 id="process-title">Новая обработка</h1>
+          <fieldset>
+            <legend>Камеры</legend>
+            <div class="compact">
+              <button type="button" id="select-all">Выбрать все</button>
+              <button type="button" id="select-none">Снять выбор</button>
+            </div>
+            <div id="camera-list" class="camera-list"><p>Загрузка списка…</p></div>
+          </fieldset>
+          <fieldset>
+            <legend title="Время отсчитывается от начала каждого файла">Отрезок записи</legend>
+            <div class="fields">
+              <label>С секунды <input id="start" type="number" min="0" step="any" placeholder="0" title="Пустое поле означает начало записи"></label>
+              <label>До секунды <input id="end" type="number" min="0" step="any" placeholder="До конца" title="Пустое поле означает конец записи"></label>
+            </div>
+          </fieldset>
+          <div class="field">
+            <div class="quality-label ruled-heading">
+              <label for="quality">Качество</label>
+              <button id="quality-info" type="button" aria-label="Что меняет качество" aria-describedby="quality-help"
+                      aria-expanded="false">ⓘ</button>
+              <span id="quality-help" role="tooltip">Режим задаёт размер кадра для детектора и модели силуэтов.
+                «Быстро» уменьшает размер. «Высокое» сохраняет больше деталей у дальних людей и требует больше времени.
+                «Авто» выбирает размер по устройству.</span>
+            </div>
+            <select id="quality">
+              <option value="auto">Авто</option>
+              <option value="fast">Быстро</option>
+              <option value="high">Высокое</option>
+            </select>
+          </div>
+          <div class="options">
+            <label class="check"><input id="silhouettes" type="checkbox" checked> Строить силуэты</label>
+            <label class="check" title="Повторно обработать видео без кэша прошлых обработок"><input id="fresh" type="checkbox"> Пересчитать с нуля</label>
+          </div>
+          <div>
+            <details>
+              <summary>Системные настройки</summary>
+              <div class="fields">
+                <label>Устройство
+                  <select id="device">
+                    <option value="auto">Авто</option><option value="cpu">CPU</option><option value="gpu">GPU</option>
+                  </select>
+                </label>
+                <label>Конфиг
+                  <select id="config-kind">
+                    <option value="base">Основной YAML</option>
+                    <option value="office">Офисные переопределения</option>
+                  </select>
+                </label>
+              </div>
+              <button type="button" id="open-config" title="Открыть выбранный YAML в системном редакторе">Открыть конфиг</button>
+              <small id="config-message" role="status"></small>
+            </details>
+            <details>
+              <summary>Папки проекта</summary>
+              <div class="fields">
+                <label>Папка с видео <input id="videos-dir" type="text" value="data/office"></label>
+                <label>Паспорта камер и план <input id="configs-dir" type="text" value="configs/office"></label>
+                <label>Папка данных внутри обработки <input id="data-dir" type="text" value="results_office"></label>
+                <label>Папка просмотра внутри обработки <input id="ui-dir" type="text" value="ui_office"></label>
+              </div>
+            </details>
+          </div>
+          <button id="generate" type="submit" class="primary" disabled>Сгенерировать</button>
+          <p id="runtime-message" hidden>Для запуска нужны <a href="#dependencies">зависимости</a>.</p>
+          <p id="process-error" class="error" role="alert" hidden></p>
+        </form>
+
+        <section class="workbench-status" aria-labelledby="status-title">
+          <h2 id="status-title" class="ruled-heading">Ход обработки</h2>
+          <p id="status-text" role="status">Ожидание запуска</p>
+          <button type="button" id="open-result" hidden>Открыть результат</button>
+          <pre id="job-log" aria-label="Журнал обработки" hidden></pre>
+        </section>
+      </div>
+    </section>
+
+    <section id="videos" class="scroll" aria-labelledby="videos-title" hidden>
+      <div class="library">
+        <div class="library-heading">
+          <div><h1 id="videos-title">Исходные записи</h1><p id="videos-message" role="status"></p></div>
+          <div class="compact">
+            <button type="button" id="refresh-videos">Обновить список</button>
+            <button type="button" id="pick-videos" class="primary" title="Выберите файлы или перетащите их на эту вкладку">Загрузить файлы</button>
+            <input id="video-files" type="file" multiple accept=".mp4,.avi,.mkv,.mov,.m4v,.ts,.mts,.wmv" hidden>
+          </div>
+        </div>
+        <div id="video-drop">Отпустите файлы для загрузки</div>
+        <ul id="uploads" aria-label="Загрузка видео" hidden></ul>
+        <div id="video-list" class="video-list"></div>
+      </div>
+    </section>
+
+    <section id="plan" class="framed" aria-label="Разметка" hidden>
+      <div class="toolbar">
+        <button type="button" data-editor="plan" aria-pressed="true" title="Сохраните изменения перед переключением инструмента">План и зоны</button>
+        <button type="button" data-editor="calibration" aria-pressed="false" title="Сохраните изменения перед переключением инструмента">Калибровка камер</button>
+      </div>
+      <iframe id="editor" title="Разметка плана и калибровка"></iframe>
+      <div id="editor-dependencies" class="empty" hidden>
+        <p>Для разметки нужны базовые библиотеки.</p>
+        <a href="#dependencies">Открыть зависимости</a>
+      </div>
+    </section>
+
+    <section id="dependencies" class="scroll" aria-labelledby="dependencies-title" hidden>
+      <div class="workbench">
+        <div class="form-stack">
+          <h1 id="dependencies-title">Зависимости</h1>
+          <p id="dependency-summary" role="status">Проверка окружения…</p>
+          <button type="button" id="install-dependencies" class="primary" disabled>Установить или обновить</button>
+          <details><summary>Пакеты и веса</summary><ul id="dependency-versions"></ul></details>
+        </div>
+        <div class="workbench-status">
+          <h2 class="ruled-heading">Установка</h2>
+          <p id="dependency-stage" role="status"></p>
+          <p id="dependency-error" class="error" role="status"></p>
+          <div id="driver-offer" hidden>
+            <p id="driver-title"></p>
+            <div class="compact">
+              <button type="button" id="install-driver">Установить драйвер</button>
+              <button type="button" id="skip-driver">Пропустить</button>
+            </div>
+          </div>
+          <a id="driver-help" target="_blank" rel="noopener noreferrer" hidden>Официальная страница драйвера</a>
+          <pre id="dependency-log" aria-label="Журнал установки" hidden></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

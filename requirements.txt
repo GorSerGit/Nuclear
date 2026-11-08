@@ -1,0 +1,22 @@
+# Проверено: Python 3.13, Windows 10, RTX 4060 (CUDA 11.8). torch ставьте под свою CUDA: https://pytorch.org
+torch==2.7.1
+ultralytics==8.4.202
+lap==0.5.14               # нужен BoT-SORT; иначе ultralytics ставит его сам при первом запуске, и без интернета падает
+torchreid==0.2.5          # если не ставится: pip install git+https://github.com/KaiyangZhou/deep-person-reid
+tensorboard==2.21.0       # нужен для импорта torchreid 0.2.5
+timm==1.0.31              # PersonViT
+safetensors==0.8.0        # веса PersonViT
+gdown==6.5.1              # скачивание весов OSNet
+opencv-python==5.0.0.93
+imageio-ffmpeg==0.8.1    # ffmpeg с libx264 без системной установки
+numpy==2.3.2
+scipy==1.18.0
+pandas==2.3.3
+pyarrow==21.0.0
+pydantic==2.12.5
+PyYAML==6.0.2
+tqdm==4.67.1
+Pillow==11.3.0
+pytest
+# веса: python scripts/download_weights.py -> weights/yolo11m-pose.pt, weights/yolo11m-seg.pt, weights/osnet_x1_0_msmt17.pth
+# системный ffmpeg с libx264 (Windows: ffmpeg.exe в PATH или render.ffmpeg в конфиге)

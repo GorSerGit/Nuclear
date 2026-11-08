@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Калибровка камер</title>
+<style>
+:root {
+  color-scheme: light;
+  font: 15px/1.4 "Segoe UI", system-ui, sans-serif;
+  background: #ccc9bf;
+  color: #232521;
+  --surface: #d4d1c8;
+  --field: #dbd8ce;
+  --line: #a29f95;
+  --control-line: #868378;
+  --quiet: #4d4d43;
+  --accent: #424f35;
+  --accent-hover: #36432c;
+  --on-accent: #f5f2e8;
+  --selected: #c0c4b2;
+}
+* { box-sizing: border-box; }
+body { margin: 0; display: flex; height: 100dvh; }
+aside { width: clamp(230px, 26vw, 320px); flex: none; padding: 16px; overflow: auto; border-inline-end: 1px solid var(--line); }
+main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow: auto; }
+h1 { font-size: 21px; margin: 0 0 12px; }
+h2 { font-size: 16px; margin: 16px 0 7px; }
+select, input, button { font: inherit; color: inherit; }
+select, input:not([type="range"]), button {
+  min-height: 34px;
+  padding: 5px 9px;
+  background: var(--field);
+  border: 1px solid var(--control-line);
+  border-radius: 5px;
+}
+button { background: var(--surface); cursor: pointer; }
+button:hover:not(:disabled) { background: var(--selected); }
+button.go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 650; }
+button.go:hover:not(:disabled) { background: var(--accent-hover); }
+button:disabled { opacity: .55; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row, #bar { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.cam { padding: 8px 6px; border-bottom: 1px solid var(--line); }
+.cam.on { background: var(--selected); }
+.cam .name { overflow-wrap: anywhere; margin-bottom: 6px; }
+.st { font-size: 13px; color: var(--quiet); }
+.ok { color: var(--accent); }
+.bad { color: #7c342e; }
+.warn { color: #694716; }
+#hint { color: var(--quiet); }
+#panes { flex: 1; min-height: 180px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.pane { position: relative; background: #292b25; border-radius: 5px; overflow: hidden; }
+.pane canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; display: block; }
+.pane .tag {
+  position: absolute;
+  left: 8px;
+  top: 6px;
+  background: rgb(28 30 25 / .82);
+  color: var(--on-accent);
+  padding: 2px 8px;
+  border-radius: 4px;
+  pointer-events: none;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+#time { flex: 1; min-width: 120px; padding: 0; accent-color: var(--accent); }
+#result { flex: 1 1 100%; }
+#result:empty { display: none; }
+#pairs { max-height: 150px; overflow: auto; }
+#pairs:empty { display: none; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+td, th { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+th { color: var(--quiet); font-weight: 600; }
+td button { min-height: 26px; padding: 0 7px; }
+@media (max-width: 620px) {
+  body { height: auto; min-height: 100dvh; flex-direction: column; }
+  aside { width: auto; border-inline-end: 0; border-bottom: 1px solid var(--line); }
+  #panes { grid-template-columns: 1fr; grid-auto-rows: minmax(240px, 40vh); }
+}
+</style></head><body>
+<aside>
+  <h1>Калибровка камер</h1>
+  <h2>1. План и масштаб</h2>
+  <select id="plan" aria-label="Изображение плана" style="width:100%"></select>
+  <div class="row" style="margin-top:6px">
+    <input id="ppm" type="number" min="1" step="0.1" aria-label="Пиксели на метр" title="Для расчёта масштаба используйте размер, указанный на плане" style="width:100px"><span class="st">пикс. на метр</span>
+    <button id="planSave">Задать</button>
+  </div>
+  <button id="lineBtn" title="Отметьте две точки на известном расстоянии" style="margin-top:6px">Измерить линией</button>
+  <div id="lineBox" hidden style="margin-top:6px">
+    <div class="st" id="lineSt"></div>
+    <div class="row" style="margin-top:6px">
+      <input id="lineM" type="number" min="0.01" step="0.01" placeholder="длина" style="width:90px"><span class="st">м</span>
+      <button id="lineApply" class="go" disabled>Применить</button>
+    </div>
+  </div>
+  <h2>2. Камеры</h2>
+  <div id="cams"></div>
+</aside>
+<main>
+  <div id="hint" role="status">Выберите камеру</div>
+  <div id="bar">
+    <label class="st" for="time">Время кадра</label><input id="time" type="range" min="0" max="1200" step="5" value="2">
+    <span id="timeSt" class="st">2 с</span>
+    <button id="undo" title="Убрать последнюю точку">Убрать точку</button>
+    <button id="clear">Очистить точки</button>
+    <button id="save" class="go" title="Перед сохранением проверьте сетку на полу. Для привязки лучше использовать 6–10 пар." disabled>Сохранить привязку</button>
+    <span id="result"></span>
+  </div>
+  <div id="panes">
+    <div class="pane"><canvas id="cf" title="Колесо — масштаб, перетаскивание — сдвиг. Ставьте точки на полу и разносите их по кадру."></canvas><div class="tag" id="ft">Кадр</div></div>
+    <div class="pane"><canvas id="cp" title="Колесо — масштаб, перетаскивание — сдвиг. Щелчок отмечает ту же точку на плане."></canvas><div class="tag">План</div></div>
+  </div>
+  <div id="pairs"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+function endpoint(path){
+  const url=new URL(path,location.href),params=new URLSearchParams(location.search);
+  for(const name of ['videos','configs'])if(params.has(name))url.searchParams.set(name,params.get(name));
+  return url;
+}
+const api=async(path,body)=>{const r=await fetch(endpoint(path),body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:undefined);const j=await r.json();if(!r.ok)throw new Error(j.error||'ошибка');return j;};
+let S=null,cur=null,pairs=[],pending=null,grid=[],errors=[],frameT=2;
+const hint=t=>$('hint').textContent=t;
+const fail=e=>{$('result').textContent=e.message;};
+
+/* Панель с картинкой: масштаб, сдвиг, щелчок в координатах картинки */
+class Pane{
+  constructor(canvas,onPick,overlay){this.c=canvas;this.img=null;this.s=1;this.x=0;this.y=0;this.onPick=onPick;this.overlay=overlay;
+    new ResizeObserver(()=>{this.fit();}).observe(canvas);
+    canvas.addEventListener('wheel',e=>{e.preventDefault();const r=canvas.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+      const k=e.deltaY<0?1.25:0.8;this.x=mx-(mx-this.x)*k;this.y=my-(my-this.y)*k;this.s*=k;this.draw();},{passive:false});
+    let down=null;
+    canvas.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY,ox:this.x,oy:this.y,moved:false};canvas.setPointerCapture(e.pointerId);});
+    canvas.addEventListener('pointermove',e=>{
+      if(!down){const r=canvas.getBoundingClientRect();if(this.onHover&&this.img)this.onHover((e.clientX-r.left-this.x)/this.s,(e.clientY-r.top-this.y)/this.s);return;}
+      const dx=e.clientX-down.x,dy=e.clientY-down.y;
+      if(Math.hypot(dx,dy)>5)down.moved=true;if(down.moved){this.x=down.ox+dx;this.y=down.oy+dy;this.draw();}});
+    canvas.addEventListener('pointerleave',()=>{if(this.onHover)this.onHover(null,null);});
+    canvas.addEventListener('pointerup',e=>{const d=down;down=null;if(!d||d.moved||!this.img)return;
+      const r=canvas.getBoundingClientRect();const u=(e.clientX-r.left-this.x)/this.s,v=(e.clientY-r.top-this.y)/this.s;
+      if(u>=0&&v>=0&&u<this.img.naturalWidth&&v<this.img.naturalHeight)this.onPick(Math.round(u),Math.round(v));});
+  }
+  load(src){const i=new Image();i.onload=()=>{this.img=i;this.fit();};i.src=src;}
+  fit(){const r=this.c.getBoundingClientRect();this.c.width=r.width;this.c.height=r.height;if(this.img){
+    this.s=Math.min(r.width/this.img.naturalWidth,r.height/this.img.naturalHeight);
+    this.x=(r.width-this.img.naturalWidth*this.s)/2;this.y=(r.height-this.img.naturalHeight*this.s)/2;}this.draw();}
+  draw(){const g=this.c.getContext('2d');g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,this.c.width,this.c.height);if(!this.img)return;
+    g.setTransform(this.s,0,0,this.s,this.x,this.y);g.drawImage(this.img,0,0);this.overlay(g,1/this.s);}
+}
+function dot(g,k,x,y,n,color){g.fillStyle=color;g.beginPath();g.arc(x,y,5*k,0,7);g.fill();g.lineWidth=1.5*k;g.strokeStyle='#000';g.stroke();
+  g.font=`bold ${14*k}px sans-serif`;g.lineWidth=3*k;g.strokeText(n,x+7*k,y-7*k);g.fillStyle='#fff';g.fillText(n,x+7*k,y-7*k);}
+const color=i=>errors[i]==null?'#ffc940':errors[i]>0.3?'#ff5a4f':errors[i]>0.15?'#ffc940':'#58d68d';
+/* Линия для масштаба: две точки на плане или на полу в кадре, длина в метрах */
+const line={on:false,pane:null,pts:[],px:null};
+function linePick(pane,x,y){
+  if(line.pane!==pane||line.pts.length>=2){line.pane=pane;line.pts=[];line.px=null;}
+  line.pts.push([x,y]);line.hover=null;$('lineApply').disabled=true;
+  if(line.pts.length<2){$('lineSt').textContent='Ведите мышью: линия тянется от первой точки. Щёлкните вторую точку.';redraw();return;}
+  redraw();lineLength();}
+async function lineLength(){
+  const [a,b]=line.pts;
+  try{
+    if(line.pane==='plan')line.px=Math.hypot(a[0]-b[0],a[1]-b[1]);
+    else{if(!cur||pairs.length<4)throw new Error('Для линии в кадре нужно не меньше 4 пар точек у этой камеры. Или отметьте линию на плане.');
+      line.px=(await api('line',{cam_id:cur.cam_id,pairs,points:line.pts})).px;}
+    $('lineSt').textContent=`Линия: ${line.px.toFixed(1)} пикс. плана. Введите её длину.`;
+    lineCheck();
+  }catch(e){line.px=null;$('lineSt').textContent=e.message;$('lineApply').disabled=true;}}
+function lineCheck(){const m=+$('lineM').value;$('lineApply').disabled=!(line.px>0&&m>0);
+  if(line.px>0&&m>0)$('lineSt').textContent=`Линия: ${line.px.toFixed(1)} пикс. плана, масштаб ${(line.px/m).toFixed(2)} пикс. на метр.`;}
+function lineDraw(g,k,pane){if(!line.on||line.pane!==pane||!line.pts.length)return;
+  if(line.pts.length===2){g.strokeStyle='#ff3df0';g.lineWidth=2.5*k;g.beginPath();g.moveTo(...line.pts[0]);g.lineTo(...line.pts[1]);g.stroke();}
+  else if(line.hover){const [a,b]=[line.pts[0],line.hover];g.strokeStyle='#ff3df0';g.lineWidth=2*k;g.setLineDash([8*k,6*k]);
+    g.beginPath();g.moveTo(...a);g.lineTo(...b);g.stroke();g.setLineDash([]);
+    if(pane==='plan'){const t=`${Math.hypot(a[0]-b[0],a[1]-b[1]).toFixed(0)} пикс.`;g.font=`bold ${14*k}px sans-serif`;g.lineWidth=3*k;g.strokeStyle='#000';
+      g.strokeText(t,b[0]+10*k,b[1]+16*k);g.fillStyle='#fff';g.fillText(t,b[0]+10*k,b[1]+16*k);}}
+  line.pts.forEach((p,i)=>dot(g,k,p[0],p[1],'AB'[i],'#ff3df0'));}
+function lineHover(pane,x,y){if(!line.on||line.pane!==pane||line.pts.length!==1)return;line.hover=x===null?null:[x,y];redraw();}
+const pf=new Pane($('cf'),(u,v)=>{if(line.on)return linePick('frame',u,v);if(cur===null)return hint('Сначала выберите камеру слева.');pending=[u,v];hint('Теперь щёлкните то же место на плане.');redraw();},(g,k)=>{
+  g.strokeStyle='rgba(255,230,0,.75)';g.lineWidth=1.5*k;
+  for(const l of grid){g.beginPath();l.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));g.stroke();}
+  pairs.forEach((p,i)=>dot(g,k,p[0],p[1],i+1,color(i)));if(pending)dot(g,k,pending[0],pending[1],pairs.length+1,'#3f7cff');lineDraw(g,k,'frame');});
+const pp=new Pane($('cp'),(x,y)=>{if(line.on)return linePick('plan',x,y);if(cur===null)return;if(!pending)return hint('Сначала щёлкните точку в кадре.');
+  pairs.push([...pending,x,y]);pending=null;hint(`Пара ${pairs.length} поставлена. Щёлкните следующую точку в кадре.`);refresh();},(g,k)=>{
+  pairs.forEach((p,i)=>dot(g,k,p[2],p[3],i+1,color(i)));lineDraw(g,k,'plan');});
+const redraw=()=>{pf.draw();pp.draw();};
+pf.onHover=(x,y)=>lineHover('frame',x,y);pp.onHover=(x,y)=>lineHover('plan',x,y);
+function lineMode(on){line.on=on;line.pane=null;line.pts=[];line.px=null;line.hover=null;$('lineBox').hidden=!on;$('lineApply').disabled=true;
+  $('lineBtn').textContent=on?'Закрыть линию':'Измерить линией';
+  $('lineSt').textContent='Щёлкните две точки на плане или на полу в кадре: концы отрезка известной длины.';redraw();}
+$('lineBtn').onclick=()=>lineMode(!line.on);
+$('lineM').oninput=lineCheck;
+$('lineApply').onclick=async()=>{const ppm=+(line.px/+$('lineM').value).toFixed(3);
+  try{const j=await api('plan',{plan_image:$('plan').value,px_per_m:ppm});$('ppm').value=ppm;lineMode(false);await load();await refresh();
+    hint(`Масштаб ${ppm} пикс. на метр сохранён, привязка камер пересчитана: ${j.rescaled}.`);}catch(e){hint(e.message);}};
+function table(){
+  $('pairs').innerHTML=pairs.length?`<table><tr><th>№</th><th>кадр</th><th>план</th><th>ошибка, м</th><th></th></tr>${pairs.map((p,i)=>`<tr><td>${i+1}</td><td>${p[0]}, ${p[1]}</td><td>${p[2]}, ${p[3]}</td><td>${errors[i]??'—'}</td><td><button data-i="${i}">×</button></td></tr>`).join('')}</table>`:'';
+  document.querySelectorAll('#pairs button').forEach(b=>b.onclick=()=>{pairs.splice(+b.dataset.i,1);refresh();});
+}
+async function refresh(){
+  grid=[];errors=[];$('result').textContent='';$('save').disabled=pairs.length<4||cur===null;
+  if(pairs.length>=4&&cur!==null){try{const j=await api('preview',{cam_id:cur.cam_id,pairs});grid=j.grid;errors=j.errors_m;
+    // Судим по худшей паре: при выбросе медиана остаётся нулевой, и плохая привязка выглядела бы хорошей
+    const verdict=j.max_m<=0.3?'ok':j.max_m<=0.6?'warn':'bad';
+    const worst=j.max_m>0.3?` Пара ${errors.indexOf(j.max_m)+1} расходится: переставьте или удалите её.`:'';
+    $('result').innerHTML=`<span class=${verdict}>Медиана ошибки ${j.median_m} м · худшая пара ${j.max_m} м.${worst}</span>`;}catch(e){fail(e);}}
+  table();redraw();
+}
+function loadFrame(){if(cur)pf.load(endpoint(`frame?video=${encodeURIComponent(cur.video)}&t=${frameT}`));}
+function pick(v){cur=v;pairs=(v.pairs||[]).map(p=>[...p]);pending=null;$('ft').textContent=`cam${v.cam_id} — ${v.video}`;loadFrame();drawCams();hint('Щёлкните точку на полу в кадре, затем то же место на плане.');refresh();}
+function drawCams(){
+  const used=new Map(S.videos.filter(v=>v.cam_id!=null).map(v=>[v.cam_id,v.video]));
+  $('cams').innerHTML=S.videos.map((v,i)=>{
+    const st=v.cam_id==null?'<span class=warn>нет номера</span>':v.calibrated?`<span class=ok>привязана${v.method==='auto'?' (авто)':''}</span>`:'не привязана';
+    const opts=[...Array(Math.max(S.videos.length,9)).keys()].map(k=>k+1).map(n=>`<option value="${n}" ${v.cam_id===n?'selected':''} ${used.has(n)&&used.get(n)!==v.video?'disabled':''}>${n}</option>`).join('');
+    return `<div class="cam ${cur&&cur.video===v.video?'on':''}"><div class=name></div>
+      <div class=row><select data-i="${i}" class=num aria-label="Номер камеры" title="Выберите номер камеры с плана"><option value="">Номер</option>${opts}</select>
+      <button data-i="${i}" class=go2 ${v.cam_id==null?'disabled':''}>Калибровать</button></div>
+      <div class=st style="margin-top:4px" title="${v.lens?'Объектив определён':''}">${st}${v.zones?` · зон: ${v.zones}`:''}</div></div>`;}).join('');
+  document.querySelectorAll('.cam .name').forEach((el,i)=>el.textContent=S.videos[i].video);
+  document.querySelectorAll('.num').forEach(s=>s.onchange=async()=>{if(!s.value)return;const v=S.videos[+s.dataset.i];hint('Сохраняю номер, для новой записи определяю объектив…');
+    try{await api('assign',{video:v.video,cam_id:+s.value});await load();hint('Номер сохранён.');}catch(e){hint(e.message);await load();}});
+  document.querySelectorAll('.go2').forEach(b=>b.onclick=()=>pick(S.videos[+b.dataset.i]));
+}
+async function load(){
+  S=await api('state');
+  if(cur)cur=S.videos.find(v=>v.video===cur.video)||null;
+  $('plan').replaceChildren(...S.plans.map(p=>new Option(p,p,false,p===S.plan_image)));
+  $('ppm').value=S.px_per_m||'';
+  if($('plan').value)pp.load(endpoint('plan/'+encodeURIComponent($('plan').value)));
+  drawCams();if(!S.videos.length)hint('Записей нет: положите видео в data/office и обновите страницу.');
+}
+$('plan').onchange=()=>pp.load(endpoint('plan/'+encodeURIComponent($('plan').value)));
+$('planSave').onclick=async()=>{try{await api('plan',{plan_image:$('plan').value,px_per_m:+$('ppm').value});hint('План и масштаб сохранены.');await refresh();}catch(e){hint(e.message);}};
+$('time').oninput=()=>{frameT=+$('time').value;$('timeSt').textContent=`${frameT} с`;};
+$('time').onchange=loadFrame;
+$('undo').onclick=()=>{if(pending)pending=null;else pairs.pop();refresh();};
+$('clear').onclick=()=>{pairs=[];pending=null;refresh();};
+$('save').onclick=async()=>{try{const j=await api('save',{cam_id:cur.cam_id,pairs});await load();$('result').innerHTML=`<span class=ok>Сохранено: медиана ${j.median_m} м, макс ${j.max_m} м</span>`;
+  const next=S.videos.find(v=>v.cam_id!=null&&!v.calibrated);hint(next?`Готово. Следующая без привязки: cam${next.cam_id}.`:'Все камеры привязаны.');}catch(e){fail(e);}};
+load().catch(e=>hint(e.message));
+</script></body></html>

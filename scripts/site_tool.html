@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Разметка плана</title>
+<style>
+:root {
+  color-scheme: light;
+  font: 15px/1.4 "Segoe UI", system-ui, sans-serif;
+  background: #ccc9bf;
+  color: #232521;
+  --surface: #d4d1c8;
+  --field: #dbd8ce;
+  --line: #a29f95;
+  --control-line: #868378;
+  --quiet: #4d4d43;
+  --accent: #424f35;
+  --accent-hover: #36432c;
+  --on-accent: #f5f2e8;
+  --selected: #c0c4b2;
+}
+* { box-sizing: border-box; }
+body { margin: 0; display: flex; height: 100dvh; }
+aside { width: clamp(230px, 26vw, 320px); flex: none; padding: 16px; overflow: auto; border-inline-end: 1px solid var(--line); }
+main { flex: 1; min-width: 0; padding: 16px; overflow: auto; }
+h1 { font-size: 21px; margin: 0 0 12px; }
+h2 { font-size: 16px; margin: 16px 0 7px; }
+select, input, button {
+  min-height: 34px;
+  padding: 5px 9px;
+  background: var(--field);
+  color: inherit;
+  border: 1px solid var(--control-line);
+  border-radius: 5px;
+  font: inherit;
+}
+select, input { width: 100%; min-width: 0; }
+button { background: var(--surface); cursor: pointer; }
+button:hover, button.on { background: var(--selected); }
+button.on { border-color: var(--accent); }
+button.go { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 650; }
+button.go:hover { background: var(--accent-hover); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#save { margin-top: 12px; }
+.cam { padding: 8px 6px; border-bottom: 1px solid var(--line); cursor: pointer; overflow-wrap: anywhere; }
+.cam:hover { background: var(--surface); }
+.cam.on { background: var(--selected); }
+.cam img { width: 100%; border-radius: 4px; display: block; margin-bottom: 5px; }
+.zb { margin-top: 5px; min-height: 30px; font-size: 13px; }
+.st { font-size: 13px; color: var(--quiet); }
+.ok { color: var(--accent); }
+.row { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+.plan-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.plan-picker button { font-size: 13px; }
+.plan-picker button:disabled { opacity: .55; cursor: default; }
+#planUploadStatus:not(:empty) { margin-top: 5px; overflow-wrap: anywhere; }
+#planUploadStatus.error { color: #7c342e; }
+#scaleSt:not(:empty), #msg:not(:empty) { margin-top: 6px; }
+#hint { color: var(--quiet); }
+#hint:not(:empty), #zbar { margin-bottom: 8px; }
+#wrap { position: relative; display: inline-block; }
+#wrap img { display: block; max-width: none; }
+svg { position: absolute; inset: 0; cursor: crosshair; }
+@media (max-width: 620px) {
+  body { height: auto; min-height: 100dvh; flex-direction: column; }
+  aside { width: auto; border-inline-end: 0; border-bottom: 1px solid var(--line); }
+}
+</style></head><body>
+<aside>
+  <h1>Разметка плана</h1>
+  <h2>1. План</h2>
+  <div class="plan-picker">
+    <select id="plan" aria-label="Изображение плана"></select>
+    <button id="uploadPlan" type="button" title="Загрузить PNG-план" disabled>Загрузить</button>
+    <input id="planFile" type="file" accept=".png,image/png" hidden>
+  </div>
+  <div id="planUploadStatus" class="st" role="status"></div>
+  <h2>2. Масштаб</h2>
+  <div class="row"><button id="scaleBtn" title="Отметьте на плане концы отрезка известной длины">Отметить 2 точки</button><input id="meters" type="number" min="0.1" step="0.1" placeholder="метров" aria-label="Длина отрезка в метрах" style="width:90px"></div>
+  <div class="st" id="scaleSt"></div>
+  <h2>3. Камеры</h2>
+  <div id="cams"></div>
+  <button class="go" id="save" title="Сохранить план и камеры в site.json">Сохранить разметку</button><div id="msg" role="status"></div>
+</aside>
+<main><div id="hint" role="status"></div>
+<div id="zbar" class="row" style="display:none"><button id="zClose">Замкнуть зону</button><button id="zUndo">Удалить последнюю</button><button id="zDone" class="go">Сохранить и вернуться к плану</button></div>
+<div id="wrap"><img id="img" alt=""><svg id="svg"></svg></div></main>
+<script>
+const $=id=>document.getElementById(id);let S,site={cameras:{}},mode=null,cur=null,step=0,pts=[];
+const hint=t=>$('hint').textContent=t;
+function endpoint(path){
+  const url=new URL(path,location.href), params=new URLSearchParams(location.search);
+  for(const name of ['videos','configs'])if(params.has(name))url.searchParams.set(name,params.get(name));
+  return url;
+}
+const post=(path,body)=>fetch(endpoint(path),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+async function load(){
+  const response=await fetch(endpoint('state'));
+  S=await response.json();
+  if(!response.ok)throw new Error(S.error||'Не удалось загрузить разметку');
+  if(S.site&&S.site.cameras)site=S.site;
+  $('plan').replaceChildren(...S.plans.map(p=>new Option(p,p)));
+  if(!S.plans.length)hint('Загрузите PNG-план.');
+  // План с нарисованными камерами важнее чистого: координаты секторов относятся именно к нему
+  const marked=S.plans.find(p=>(S.marks[p]||[]).length);
+  if(site.plan_image&&S.plans.includes(site.plan_image))$('plan').value=site.plan_image;
+  else if(marked)$('plan').value=marked;
+  if(S.plans.length)setPlan();
+  if(!Object.keys(site.cameras).length)applyMarks();
+  drawCams();
+  if(!S.cams.length)hint('Камер нет: положите видео в data/office и обновите страницу.');
+  if(site.px_per_m)$('scaleSt').textContent=`Масштаб: ${(+site.px_per_m).toFixed(1)} пикс. на метр`;
+  $('uploadPlan').disabled=false;
+}
+function setPlan(){site.plan_image=$('plan').value;$('img').src=endpoint('plan/'+encodeURIComponent(site.plan_image));}
+$('plan').onchange=()=>{setPlan();site.cameras={};applyMarks();drawCams();draw();};
+$('uploadPlan').onclick=()=>$('planFile').click();
+$('planFile').onchange=async()=>{
+  const input=$('planFile'), file=input.files[0], button=$('uploadPlan'), status=$('planUploadStatus');
+  input.value='';
+  if(!file)return;
+  button.disabled=true;
+  status.classList.remove('error');
+  status.textContent='Загрузка…';
+  try{
+    const url=endpoint('upload');
+    url.searchParams.set('name',file.name);
+    const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(result.error||'Не удалось загрузить план.');
+    const select=$('plan'), selected=select.value, first=!S.plans.length;
+    S.plans=[...new Set([...S.plans,result.name])].sort();
+    S.marks[result.name]=result.marks;
+    select.replaceChildren(...S.plans.map(name=>new Option(name,name)));
+    select.value=selected||result.name;
+    if(first&&zcam===null)select.onchange();
+    status.textContent='План добавлен';
+  }catch(error){
+    status.classList.add('error');
+    status.textContent=error.message;
+  }finally{
+    button.disabled=false;
+  }
+};
+let found='';
+function applyMarks(){
+  // Номер из значка; если не прочитан или такой камеры нет — следующая свободная. Человек проверяет на плане.
+  const ms=S.marks[$('plan').value]||[];found='';if(!ms.length||!S.cams.length)return;
+  const free=S.cams.map(c=>c.id).filter(id=>!ms.some(m=>m.num===id));let n=0;
+  for(const m of ms){const id=S.cams.some(c=>c.id===m.num)?m.num:free.shift();if(id===undefined)continue;
+    site.cameras[id]={name:(S.cams.find(c=>c.id===id)||{}).name,pos:m.pos.map(Math.round),look_at:m.look_at.map(Math.round)};n++;}
+  found=`Расставлено ${n} из ${ms.length} камер. Проверьте номера и направления.`;
+}
+$('img').onload=()=>{const i=$('img'),z=zcam!==null;$('svg').setAttribute('width',z?'100%':i.naturalWidth);$('svg').setAttribute('height',z?'100%':i.naturalHeight);$('svg').setAttribute('viewBox',`0 0 ${i.naturalWidth} ${i.naturalHeight}`);draw();
+  if(S.cams.length&&!z)hint(found);};
+// Экраны и зеркала: кадр камеры вместо плана. Обводите с небольшим запасом, но не заходя на пол.
+let zcam=null,zpts=[];
+function openZones(id){zcam=id;zpts=[];mode='zone';cur=null;pts=[];$('zbar').style.display='flex';$('wrap').style.width='100%';$('img').style.width='100%';$('img').src=endpoint('frame/'+id);
+  hint(`cam${id} · отметьте контур экрана или зеркала`);drawCams();}
+const zones=()=>(S.cams.find(c=>c.id===zcam)||{}).zones;
+$('zClose').onclick=()=>{if(zpts.length<3){hint('Нужно хотя бы 3 точки');return;}const z=zones();let n=1;while(z['зона '+n])n++;z['зона '+n]=zpts;zpts=[];draw();};
+$('zUndo').onclick=()=>{if(zpts.length)zpts=[];else{const k=Object.keys(zones()).pop();if(k)delete zones()[k];}draw();};
+$('zDone').onclick=async()=>{const r=await post('zones',{cam:zcam,zones:zones()});
+  if(!r.ok){hint((await r.json()).error);return;}
+  zcam=null;zpts=[];mode=null;$('zbar').style.display='none';$('wrap').style.width='';$('img').style.width='';setPlan();drawCams();};
+function drawCams(){
+  $('cams').innerHTML=S.cams.map(c=>{const m=site.cameras[c.id]||{};const st=m.pos?(m.look_at?'<span class=ok>Размечена</span>':'<span class=ok>Положение отмечено</span>'):'Не отмечена';
+    return `<div class="cam${cur===c.id||zcam===c.id?' on':''}" data-id="${c.id}" title="Отметьте положение и направление камеры на плане">${c.frame?`<img src="data:image/jpeg;base64,${c.frame}" alt="">`:''}<b>cam${c.id}</b> <span class="cam-name"></span><div class=st>${st}</div><button class=zb data-z="${c.id}" title="Исключить детекции внутри отмеченных зон">Экраны и зеркала: ${Object.keys(c.zones||{}).length}</button></div>`}).join('');
+  document.querySelectorAll('.cam-name').forEach((el,i)=>el.textContent=S.cams[i].name);
+  document.querySelectorAll('.zb').forEach(b=>b.onclick=e=>{e.stopPropagation();openZones(+b.dataset.z);});
+  document.querySelectorAll('.cam').forEach(e=>e.onclick=()=>{if(zcam!==null)return;cur=+e.dataset.id;mode='cam';step=0;$('scaleBtn').classList.remove('on');hint(`cam${cur}: щёлкните точку на полу под камерой`);drawCams();});
+}
+$('scaleBtn').onclick=()=>{mode='scale';pts=[];cur=null;$('scaleBtn').classList.add('on');hint('Щёлкните первую точку');drawCams();draw();};
+$('meters').oninput=applyScale;
+function applyScale(){
+  const m=+$('meters').value;if(pts.length<2||!m)return;
+  site.px_per_m=+(Math.hypot(pts[1][0]-pts[0][0],pts[1][1]-pts[0][1])/m).toFixed(3);
+  $('scaleSt').textContent=`Масштаб: ${site.px_per_m.toFixed(1)} пикс. на метр`;
+}
+$('svg').onclick=e=>{
+  const r=$('svg').getBoundingClientRect(),k=$('img').naturalWidth/r.width;const p=[Math.round((e.clientX-r.left)*k),Math.round((e.clientY-r.top)*k)];
+  if(mode==='zone')zpts.push(p);
+  else if(mode==='scale'){pts.push(p);if(pts.length===1)hint('Щёлкните вторую точку');if(pts.length===2){mode=null;$('scaleBtn').classList.remove('on');hint('Впишите расстояние в метрах слева');applyScale();$('meters').focus();}}
+  else if(mode==='cam'&&cur!==null){const name=(S.cams.find(c=>c.id===cur)||{}).name;const m=site.cameras[cur]=site.cameras[cur]||{name};
+    if(step===0){m.pos=p;delete m.look_at;step=1;hint(`cam${cur}: щёлкните точку, куда смотрит камера (можно пропустить)`);}
+    else{m.look_at=p;mode=null;const n=S.cams.find(c=>!(site.cameras[c.id]||{}).pos);hint(n?`Выберите следующую камеру: cam${n.id}`:'Все камеры отмечены. Сохраните.');cur=null;}
+    drawCams();}
+  draw();
+};
+function draw(){
+  let h='';
+  if(zcam!==null){
+    for(const p of Object.values(zones()))h+=`<polygon points="${p.map(q=>q.join(',')).join(' ')}" fill="#ff3b30" fill-opacity=".35" stroke="#ff3b30" stroke-width="4"/>`;
+    if(zpts.length)h+=`<polyline points="${zpts.map(q=>q.join(',')).join(' ')}" fill="none" stroke="#ffc940" stroke-width="4"/>`;
+    for(const p of zpts)h+=`<circle cx="${p[0]}" cy="${p[1]}" r="9" fill="#ffc940"/>`;
+    $('svg').innerHTML=h;return;
+  }
+  for(const p of pts)h+=`<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="#ffc940"/>`;
+  if(pts.length==2)h+=`<line x1="${pts[0][0]}" y1="${pts[0][1]}" x2="${pts[1][0]}" y2="${pts[1][1]}" stroke="#ffc940" stroke-width="2"/>`;
+  for(const [id,c] of Object.entries(site.cameras||{})){if(!c.pos)continue;
+    if(c.look_at)h+=`<line x1="${c.pos[0]}" y1="${c.pos[1]}" x2="${c.look_at[0]}" y2="${c.look_at[1]}" stroke="#3f7cff" stroke-width="2"/>`;
+    h+=`<circle cx="${c.pos[0]}" cy="${c.pos[1]}" r="7" fill="#3f7cff" stroke="#fff"/><text x="${c.pos[0]+10}" y="${c.pos[1]-8}" fill="#d0342c" stroke="#fff" stroke-width=".4" font-weight="700" font-size="15">cam${id}</text>`;}
+  $('svg').innerHTML=h;
+}
+$('save').onclick=async()=>{
+  applyScale();
+  try{
+    const r=await post('save',site),j=await r.json();
+    $('msg').classList.toggle('ok',r.ok);
+    $('msg').textContent=r.ok?'Разметка сохранена':j.error;
+  }catch(e){$('msg').textContent=e.message;}
+};
+load().catch(e=>hint(e.message));
+</script></body></html>

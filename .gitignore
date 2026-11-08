@@ -1,0 +1,13 @@
+weights/
+data/
+datasets/
+results/
+renders/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+results_*/
+ui_*/
+control_history.csv
+*.zip

@@ -1,0 +1,61 @@
+{
+  "cameras": {
+    "1": {
+      "name": "camera_new_1",
+      "pos": [
+        459,
+        251
+      ],
+      "look_at": [
+        450,
+        299
+      ]
+    },
+    "2": {
+      "name": "camera_new_2",
+      "pos": [
+        325,
+        402
+      ],
+      "look_at": [
+        374,
+        341
+      ]
+    },
+    "3": {
+      "name": "camera_new_3",
+      "pos": [
+        612,
+        255
+      ],
+      "look_at": [
+        592,
+        356
+      ]
+    },
+    "4": {
+      "name": "camera_new_4",
+      "pos": [
+        651,
+        714
+      ],
+      "look_at": [
+        546,
+        702
+      ]
+    },
+    "5": {
+      "name": "camera_new_5",
+      "pos": [
+        601,
+        1106
+      ],
+      "look_at": [
+        600,
+        938
+      ]
+    }
+  },
+  "plan_image": "office_camera.png",
+  "px_per_m": 27.727
+}
